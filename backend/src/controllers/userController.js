@@ -99,8 +99,17 @@ router.post('/invite', auth, checkPermission('team:manage'), async (req, res) =>
       [req.user.org_id, email.toLowerCase(), roleId, token, expiresAt]
     );
 
-    // 4. Send Email
-    const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/accept-invite?token=${token}`;
+    // 4. Send Email (Dynamic discovery of base URL)
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers.host;
+    let baseUrl = process.env.FRONTEND_URL || `${protocol}://${host}`;
+    
+    // Localhost fallback: Redirect from backend port (5001) to frontend port (5173)
+    if (baseUrl.includes('localhost:5001')) {
+      baseUrl = baseUrl.replace('5001', '5173');
+    }
+    
+    const inviteLink = `${baseUrl}/accept-invite?token=${token}`;
     
     await mailService.sendEmail({
       to: email,
