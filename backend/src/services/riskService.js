@@ -117,9 +117,15 @@ class RiskService {
     if (riskData.riskScore >= 0.6) {
       (async () => {
         try {
-          const projectRes = await db.query('SELECT name FROM projects WHERE id = $1', [projectId]);
-          if (projectRes.rows[0]) {
-            await mailService.sendRiskAlertEmail(projectRes.rows[0], riskData);
+          const projectRes = await db.query(
+            `SELECT p.name, u.email 
+             FROM projects p 
+             JOIN users u ON p.owner_id = u.id 
+             WHERE p.id = $1`, 
+            [projectId]
+          );
+          if (projectRes.rows[0]?.email) {
+            await mailService.sendRiskAlertEmail(projectRes.rows[0].email, projectRes.rows[0], riskData);
           }
         } catch (err) {
           console.error('Failed to send risk alert email:', err);

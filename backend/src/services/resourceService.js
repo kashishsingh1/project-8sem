@@ -7,7 +7,7 @@ class ResourceService {
   /**
    * Get all team members along with their current workload and skills.
    */
-  async getTeamWorkload() {
+  async getTeamWorkload(orgId) {
     const query = `
       SELECT 
         tm.id, 
@@ -27,20 +27,23 @@ class ResourceService {
           WHERE ms.member_id = tm.id
         ), '[]') as skills
       FROM team_members tm
+      WHERE tm.org_id = $1
       ORDER BY tm.name ASC
     `;
 
-    const result = await db.query(query);
+    const result = await db.query(query, [orgId]);
     return result.rows;
   }
 
   /**
    * Assign a task to a team member.
    */
-  async assignTask(taskId, memberId) {
+  async assignTask(taskId, memberId, orgId) {
     await db.query(
-      'UPDATE tasks SET assigned_to = $1 WHERE id = $2',
-      [memberId, taskId]
+      `UPDATE tasks SET assigned_to = $1 
+       WHERE id = $2 
+       AND project_id IN (SELECT id FROM projects WHERE org_id = $3)`,
+      [memberId, taskId, orgId]
     );
     return { success: true };
   }
@@ -49,7 +52,7 @@ class ResourceService {
    * Get tasks assigned to a specific member across all projects.
    * Includes basic task fields + project name + assignee display name.
    */
-  async getTasksByMember(memberId) {
+  async getTasksByMember(memberId, orgId) {
     const query = `
       SELECT
         t.*,
@@ -68,11 +71,11 @@ class ResourceService {
         FROM task_dependencies td
         GROUP BY td.task_id
       ) dep ON dep.task_id = t.id
-      WHERE t.assigned_to = $1
+      WHERE t.assigned_to = $1 AND p.org_id = $2
       ORDER BY t.created_at ASC
     `;
 
-    const result = await db.query(query, [memberId]);
+    const result = await db.query(query, [memberId, orgId]);
     return result.rows;
   }
 

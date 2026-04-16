@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { getProjectDashboard, updateTask, createTask, deleteTask, getTeam, suggestTeam, updateProject, deleteProject } from '../lib/api';
 import GanttChart from '../components/GanttChart';
+import { useModal } from '../context/ModalContext';
+import { useAuth } from '../context/AuthContext';
 
 type Props = { projectId: string; navigate: (p: any) => void };
 
@@ -26,7 +28,9 @@ function getRiskCategory(score: number) {
 }
 
 export default function ProjectDetail({ projectId, navigate }: Props) {
+  const { hasPermission } = useAuth();
   const qc = useQueryClient();
+  const { confirm } = useModal();
   const [toast, setToast] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState<any>(null);
@@ -205,8 +209,15 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
     projectUpdateMutation.mutate(projectForm);
   };
 
-  const handleDeleteProject = () => {
-    if (confirm('⚠️ Are you sure? This will permanently delete the project and all its tasks.')) {
+  const handleDeleteProject = async () => {
+    const ok = await confirm({
+      title: 'Delete Entire Project?',
+      message: `Warning: This will permanently xóa bỏ "${project?.name}" and all of its ${tasks.length} tasks. This data cannot be recovered.`,
+      type: 'danger',
+      confirmText: 'Delete Everything'
+    });
+    
+    if (ok) {
       projectDeleteMutation.mutate();
     }
   };
@@ -271,32 +282,42 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
             <h1 className="page-title" style={{ margin: 0 }}>{project?.name}</h1>
             {project?.status && <span className={`badge badge-${project.status}`}>{project.status}</span>}
-            <div style={{ display: 'flex', gap: 8, marginLeft: 8 }}>
-              <button 
-                onClick={openEditProject} 
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}
-                title="Edit Project"
-              >
-                <Edit size={16} />
-              </button>
-              <button 
-                onClick={handleDeleteProject}
-                style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 4, opacity: 0.7 }}
-                title="Delete Project"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
+            {hasPermission('projects:manage') && (
+              <div style={{ display: 'flex', gap: 8, marginLeft: 8 }}>
+                <button 
+                  onClick={openEditProject} 
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}
+                  title="Edit Project"
+                >
+                  <Edit size={16} />
+                </button>
+                <button 
+                  onClick={handleDeleteProject}
+                  style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 4, opacity: 0.7 }}
+                  title="Delete Project"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )}
           </div>
-          <p className="page-subtitle" style={{ maxWidth: 720 }}>{project?.description}</p>
+          <p className="page-subtitle" style={{ maxWidth: 720 }}>
+            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Manager: {project?.owner_name || 'System'}</span>
+            <br />
+            {project?.description}
+          </p>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => suggestMutation.mutate()} disabled={suggestMutation.isPending} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            🤖 {suggestMutation.isPending ? 'Analyzing...' : 'Auto-Assign Tasks'}
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowTaskModal(true)}>
-            + Add Task
-          </button>
+          {hasPermission('tasks:manage') && (
+            <>
+              <button className="btn btn-secondary btn-sm" onClick={() => suggestMutation.mutate()} disabled={suggestMutation.isPending} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                🤖 {suggestMutation.isPending ? 'Analyzing...' : 'Auto-Assign Tasks'}
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={() => setShowTaskModal(true)}>
+                + Add Task
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -456,7 +477,7 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
             ) : (
               filteredTasks.map(task => (
                 <div key={task.id} className="task-item" style={{ marginBottom: 8 }}>
-                  <button onClick={() => toggleTaskStatus(task)} className={`task-checkbox ${task.status === 'done' ? 'checked' : ''}`}>
+                  <button onClick={() => hasPermission('tasks:manage') && toggleTaskStatus(task)} className={`task-checkbox ${task.status === 'done' ? 'checked' : ''}`} style={{ cursor: hasPermission('tasks:manage') ? 'pointer' : 'default' }}>
                     {task.status === 'done' && '✓'}
                   </button>
                   <div style={{ flex: 1 }}>
@@ -479,7 +500,9 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
                       <span>Est: {task.estimated_hours}h</span>
                       {task.actual_hours > 0 && <span style={{ color: 'var(--accent-light)', fontWeight: 600 }}>Act: {task.actual_hours}h</span>}
                     </div>
-                    <button onClick={() => setEditingTask(task)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 8, opacity: 0.6 }}>✏️</button>
+                    <button onClick={() => setEditingTask(task)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 8, opacity: 0.6 }}>
+                      {hasPermission('tasks:manage') ? '✏️' : '👁️'}
+                    </button>
                   </div>
                 </div>
               ))
@@ -522,8 +545,8 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
                     <motion.div 
                       key={task.id} 
                       layoutId={task.id}
-                      draggable="true"
-                      onDragStart={(e: any) => handleDragStart(e, task.id)}
+                      draggable={hasPermission('tasks:manage') ? "true" : "false"}
+                      onDragStart={(e: any) => hasPermission('tasks:manage') && handleDragStart(e, task.id)}
                       className="kanban-card"
                       onClick={() => setEditingTask(task)}
                     >
@@ -621,10 +644,11 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
         <div className="modal-overlay" onClick={() => setEditingTask(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">✏️ Edit Task</span>
+              <span className="modal-title">{hasPermission('tasks:manage') ? '✏️ Edit Task' : '👁️ View Task'}</span>
               <button className="modal-close" onClick={() => setEditingTask(null)}>✕</button>
             </div>
             <form onSubmit={handleEditSubmit} className="modal-form">
+               <fieldset disabled={!hasPermission('tasks:manage')} style={{ border: 'none', padding: 0, margin: 0 }}>
                <div className="form-group">
                  <label className="form-label">Task Title *</label>
                  <input className="form-input" value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} required />
@@ -662,13 +686,33 @@ export default function ProjectDetail({ projectId, navigate }: Props) {
                    {team.map((m: any) => (<option key={m.id} value={m.id}>{m.name}</option>))}
                  </select>
                </div>
-               <div className="modal-actions" style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)', justifyContent: 'space-between' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => { if(confirm('Delete?')) { deleteMutation.mutate(editingTask.id); setEditingTask(null); } }} style={{ color: 'var(--danger)' }}>Delete</button>
-                  <div style={{ display: 'flex', gap: 12 }}>
-                    <button type="button" className="btn btn-secondary" onClick={() => setEditingTask(null)}>Cancel</button>
-                    <button type="submit" className="btn btn-primary">Save Changes</button>
-                  </div>
-               </div>
+               </fieldset>
+               {hasPermission('tasks:manage') && (
+                 <div className="modal-actions" style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)', justifyContent: 'space-between' }}>
+                   <button 
+                     type="button" 
+                     className="btn btn-secondary" 
+                     onClick={async () => {
+                       const ok = await confirm({
+                         title: 'Delete Task?',
+                         message: `Permanently remove "${editingTask.title}"?`,
+                         type: 'danger'
+                       });
+                       if (ok) {
+                         deleteMutation.mutate(editingTask.id);
+                         setEditingTask(null);
+                       }
+                     }} 
+                     style={{ color: 'var(--danger)' }}
+                   >
+                     Delete
+                   </button>
+                   <div style={{ display: 'flex', gap: 12 }}>
+                     <button type="button" className="btn btn-secondary" onClick={() => setEditingTask(null)}>Cancel</button>
+                     <button type="submit" className="btn btn-primary">Save Changes</button>
+                   </div>
+                 </div>
+               )}
             </form>
           </div>
         </div>

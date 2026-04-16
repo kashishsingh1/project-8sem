@@ -2,14 +2,53 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const geminiService = require('../services/geminiService');
+const { auth, checkPermission } = require('../middleware/authMiddleware');
 
 /**
  * @route GET /api/projects
  * @desc Get all projects
  */
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM projects ORDER BY created_at DESC');
+    const hasViewAll = req.user.permissions.includes('projects:view_all') || req.user.permissions.includes('*');
+    const hasView = req.user.permissions.includes('projects:view');
+
+    if (!hasViewAll && !hasView) {
+      return res.status(403).json({ error: 'Access denied. You do not have permission to view projects.' });
+    }
+
+    
+    let queryStr = '';
+    let params = [req.user.org_id];
+
+    if (hasViewAll) {
+      queryStr = `
+        SELECT p.*, u.name as owner_name 
+        FROM projects p 
+        LEFT JOIN users u ON p.owner_id = u.id 
+        WHERE p.org_id = $1 
+        ORDER BY p.created_at DESC
+      `;
+    } else {
+      queryStr = `
+        SELECT p.*, u.name as owner_name 
+        FROM projects p 
+        LEFT JOIN users u ON p.owner_id = u.id 
+        WHERE p.org_id = $1 
+        AND (
+          p.owner_id = $2 
+          OR EXISTS (
+            SELECT 1 FROM tasks t 
+            JOIN team_members tm ON t.assigned_to = tm.id 
+            WHERE t.project_id = p.id AND tm.email = $3
+          )
+        )
+        ORDER BY p.created_at DESC
+      `;
+      params.push(req.user.id, req.user.email);
+    }
+
+    const result = await db.query(queryStr, params);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -20,7 +59,7 @@ router.get('/', async (req, res) => {
  * @route POST /api/projects
  * @desc Create new project and generate AI tasks
  */
-router.post('/', async (req, res) => {
+router.post('/', auth, checkPermission('projects:create'), async (req, res) => {
   try {
     const { name, description, start_date, end_date } = req.body;
     
@@ -34,8 +73,8 @@ router.post('/', async (req, res) => {
 
     // 1. Core Project Insertion
     const projectResult = await db.query(
-      'INSERT INTO projects (name, description, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, description, start_date, end_date]
+      'INSERT INTO projects (name, description, start_date, end_date, org_id, owner_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [name, description, start_date, end_date, req.user.org_id, req.user.id]
     );
     const project = projectResult.rows[0];
 
@@ -70,6 +109,16 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // 5. Trigger Confirmation Email (Async)
+    (async () => {
+      try {
+        const mailService = require('../services/mailService');
+        await mailService.sendProjectConfirmationEmail(req.user, project);
+      } catch (err) {
+        console.error('Failed to send project confirmation email:', err);
+      }
+    })();
+
     res.status(201).json({ project, tasks: insertedTasks });
   } catch (error) {
     console.error('AI Planning Error:', error);
@@ -81,7 +130,7 @@ router.post('/', async (req, res) => {
  * @route PATCH /api/projects/:id
  * @desc Update project details
  */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', auth, checkPermission('projects:manage'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, start_date, end_date, status } = req.body;
@@ -98,9 +147,9 @@ router.patch('/:id', async (req, res) => {
 
     if (fields.length === 0) return res.status(400).json({ error: 'No fields provided' });
 
-    values.push(id);
+    values.push(id, req.user.org_id);
     const result = await db.query(
-      `UPDATE projects SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE projects SET ${fields.join(', ')} WHERE id = $${idx} AND org_id = $${idx + 1} RETURNING *`,
       values
     );
 
@@ -115,15 +164,16 @@ router.patch('/:id', async (req, res) => {
  * @route DELETE /api/projects/:id
  * @desc Delete project and all associated tasks
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, checkPermission('projects:manage'), async (req, res) => {
   try {
     const { id } = req.params;
     
     // Dependencies are handled by ON DELETE CASCADE in SQL if set up, 
     // otherwise manual deletion is needed. Let's ensure tasks are gone.
-    await db.query('DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE project_id = $1)', [id]);
-    await db.query('DELETE FROM tasks WHERE project_id = $1', [id]);
-    const result = await db.query('DELETE FROM projects WHERE id = $1 RETURNING *', [id]);
+    // Only delete if it belongs to the org
+    await db.query('DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE project_id = $1 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND org_id = $2))', [id, req.user.org_id]);
+    await db.query('DELETE FROM tasks WHERE project_id = $1 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND org_id = $2)', [id, req.user.org_id]);
+    const result = await db.query('DELETE FROM projects WHERE id = $1 AND org_id = $2 RETURNING *', [id, req.user.org_id]);
 
     if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
     res.json({ message: 'Project and all tasks deleted successfully' });

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getDashboard } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 
 type Props = { navigate: (p: any) => void };
 
@@ -27,6 +28,8 @@ function formatDate(d: string) {
 }
 
 export default function Dashboard({ navigate }: Props) {
+  const { hasPermission } = useAuth();
+  
   const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
     queryFn: getDashboard,
@@ -60,9 +63,11 @@ export default function Dashboard({ navigate }: Props) {
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle">Welcome back — here's how your projects are doing.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => navigate('projects')}>
-          ＋ New Project
-        </button>
+        {hasPermission('projects:create') && (
+          <button className="btn btn-primary" onClick={() => navigate('projects')}>
+            ＋ New Project
+          </button>
+        )}
       </div>
 
       {/* ── KPI Stats ── */}
@@ -137,7 +142,7 @@ export default function Dashboard({ navigate }: Props) {
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                      Created {formatDate(p.created_at)}
+                      Manager: {p.owner_name || 'Unassigned'} • Created {formatDate(p.created_at)}
                     </div>
                   </div>
                   <span className={`badge badge-${p.status}`}>{p.status}</span>

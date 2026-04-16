@@ -2,14 +2,22 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const mailService = require('../services/mailService');
+const { auth, checkPermission } = require('../middleware/authMiddleware');
 
 /**
  * @route GET /api/tasks/:projectId
  * @desc Get all tasks for a project
  */
-router.get('/:projectId', async (req, res) => {
+router.get('/:projectId', auth, checkPermission('tasks:view'), async (req, res) => {
   try {
     const { projectId } = req.params;
+
+    // Verify project belongs to user org
+    const projectCheck = await db.query('SELECT id FROM projects WHERE id = $1 AND org_id = $2', [projectId, req.user.org_id]);
+    if (projectCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied to this project' });
+    }
+
     const result = await db.query(
       `SELECT t.*, 
         COALESCE(
@@ -35,9 +43,19 @@ router.get('/:projectId', async (req, res) => {
  * @route PATCH /api/tasks/:taskId
  * @desc Update a task (status, actual_hours, etc.)
  */
-router.patch('/:taskId', async (req, res) => {
+router.patch('/:taskId', auth, checkPermission('tasks:manage'), async (req, res) => {
   try {
     const { taskId } = req.params;
+
+    // Verify task belongs to user org via project
+    const taskCheck = await db.query(
+      'SELECT t.id, t.assigned_to FROM tasks t JOIN projects p ON t.project_id = p.id WHERE t.id = $1 AND p.org_id = $2',
+      [taskId, req.user.org_id]
+    );
+    if (taskCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied to this task' });
+    }
+
     const { status, actual_hours, title, description, due_date, estimated_hours, assigned_to } = req.body;
 
     const fields = [];
@@ -78,7 +96,14 @@ router.patch('/:taskId', async (req, res) => {
     }
 
     values.push(taskId);
-    const query = `UPDATE tasks SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+    // Extra safety: re-check org_id in UPDATE
+    const query = `
+      UPDATE tasks SET ${fields.join(', ')} 
+      WHERE id = $${paramIndex} 
+      AND project_id IN (SELECT id FROM projects WHERE org_id = $${paramIndex + 1}) 
+      RETURNING *`;
+    
+    values.push(req.user.org_id);
     const result = await db.query(query, values);
 
     if (result.rows.length === 0) {
@@ -87,24 +112,41 @@ router.patch('/:taskId', async (req, res) => {
 
     res.json(result.rows[0]);
 
-    // Async notification (don't await to avoid blocking response)
-    if (assigned_to) {
-      (async () => {
-        try {
-          const task = result.rows[0];
-          const [memberRes, projectRes] = await Promise.all([
-            db.query('SELECT name, email FROM team_members WHERE id = $1', [assigned_to]),
-            db.query('SELECT name FROM projects WHERE id = $1', [task.project_id])
-          ]);
-          
-          if (memberRes.rows[0] && projectRes.rows[0]) {
-            await mailService.sendTaskAssignmentEmail(memberRes.rows[0], task, projectRes.rows[0]);
+    // 2. Async Notifications
+    (async () => {
+      try {
+        const task = result.rows[0];
+        const prevTask = taskCheck.rows[0]; // I'll need to fetch more fields in the check query
+        
+        // Fetch assignee and project details
+        const [memberRes, projectRes] = await Promise.all([
+          db.query('SELECT name, email FROM team_members WHERE id = $1', [task.assigned_to]),
+          db.query('SELECT name FROM projects WHERE id = $1', [task.project_id])
+        ]);
+
+        const member = memberRes.rows[0];
+        const project = projectRes.rows[0];
+
+        if (member && project) {
+          // If the assignee just changed or was newly set
+          if (assigned_to && assigned_to !== prevTask.assigned_to && assigned_to !== '') {
+            await mailService.sendTaskAssignmentEmail(member, task, project);
+          } 
+          // If the task was already assigned to this person, but other fields changed
+          else if (task.assigned_to && (status || title || due_date)) {
+            const changes = [
+              status ? `Status changed to <strong>${status}</strong>` : null,
+              title ? `Title updated to <strong>${title}</strong>` : null,
+              due_date ? `Due date moved to <strong>${new Date(due_date).toLocaleDateString()}</strong>` : null
+            ].filter(Boolean).join(', ');
+            
+            await mailService.sendTaskUpdateEmail(member, task, project, changes);
           }
-        } catch (err) {
-          console.error('Failed to send assignment email:', err);
         }
-      })();
-    }
+      } catch (err) {
+        console.error('Failed to send task notification:', err);
+      }
+    })();
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -114,10 +156,22 @@ router.patch('/:taskId', async (req, res) => {
  * @route DELETE /api/tasks/:taskId
  * @desc Delete a task
  */
-router.delete('/:taskId', async (req, res) => {
+router.delete('/:taskId', auth, checkPermission('tasks:manage'), async (req, res) => {
   try {
     const { taskId } = req.params;
-    await db.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+    
+    const result = await db.query(
+      `DELETE FROM tasks 
+       WHERE id = $1 
+       AND project_id IN (SELECT id FROM projects WHERE org_id = $2)
+       RETURNING *`, 
+      [taskId, req.user.org_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found or access denied' });
+    }
+    
     res.json({ message: 'Task deleted' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -128,18 +182,25 @@ router.delete('/:taskId', async (req, res) => {
  * @route POST /api/tasks
  * @desc Manually create a new task
  */
-router.post('/', async (req, res) => {
+router.post('/', auth, checkPermission('tasks:manage'), async (req, res) => {
   try {
     const { project_id, title, description, estimated_hours, due_date, assigned_to } = req.body;
+    
+    // Verify project belongs to user org
+    const projectCheck = await db.query('SELECT id FROM projects WHERE id = $1 AND org_id = $2', [project_id, req.user.org_id]);
+    if (projectCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied to this project' });
+    }
+
     
     if (!project_id || !title) {
       return res.status(400).json({ error: 'project_id and title are required' });
     }
 
     const result = await db.query(
-      `INSERT INTO tasks (project_id, title, description, estimated_hours, due_date, assigned_to) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [project_id, title, description, estimated_hours || 0, due_date, assigned_to]
+      `INSERT INTO tasks (project_id, title, description, estimated_hours, due_date, assigned_to, org_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [project_id, title, description, estimated_hours || 0, due_date, assigned_to, req.user.org_id]
     );
 
     res.status(201).json(result.rows[0]);

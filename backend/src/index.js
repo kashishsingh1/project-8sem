@@ -4,6 +4,10 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5001;
+const schedulerService = require('./services/schedulerService');
+
+// Start background notification scheduler
+schedulerService.start();
 
 // Middleware
 app.use(cors());
@@ -16,6 +20,8 @@ const dashboardRoutes = require('./controllers/dashboardController');
 const teamRoutes = require('./controllers/teamController');
 const reportRoutes = require('./controllers/reportController');
 const chatRoutes = require('./controllers/chatController');
+const authRoutes = require('./controllers/authController');
+const userRoutes = require('./controllers/userController');
 
 app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
@@ -23,6 +29,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

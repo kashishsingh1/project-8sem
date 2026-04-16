@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getProjects, createProject, updateProject, deleteProject } from '../lib/api';
+import { useModal } from '../context/ModalContext';
+import { useAuth } from '../context/AuthContext';
 
 type Props = { navigate: (p: any) => void };
 
@@ -16,7 +18,9 @@ function getRiskColor(score: number) {
 }
 
 export default function Projects({ navigate }: Props) {
+  const { hasPermission } = useAuth();
   const qc = useQueryClient();
+  const { confirm } = useModal();
   const [showModal, setShowModal] = useState(false);
   const [editingProject, setEditingProject] = useState<any>(null);
   const [form, setForm] = useState({ name: '', description: '', start_date: '', end_date: '' });
@@ -119,9 +123,16 @@ export default function Projects({ navigate }: Props) {
     updateMutation.mutate({ id: editingProject.id, data: editingProject });
   };
 
-  const handleDelete = (e: React.MouseEvent, id: string, name: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
-    if (confirm(`Are you sure you want to delete "${name}"? All tasks will be permanently removed.`)) {
+    const ok = await confirm({
+      title: 'Delete Project?',
+      message: `Are you sure you want to delete "${name}"? All tasks and associated data will be permanently removed. This action cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Permanently'
+    });
+    
+    if (ok) {
       deleteMutation.mutate(id);
     }
   };
@@ -135,9 +146,11 @@ export default function Projects({ navigate }: Props) {
           <h1 className="page-title">Projects</h1>
           <p className="page-subtitle">AI-planned projects with smart task breakdown.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-          ⚡ New AI Project
-        </button>
+        {hasPermission('projects:create') && (
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            ⚡ New AI Project
+          </button>
+        )}
       </div>
 
       <div className="search-filter-bar">
@@ -184,9 +197,11 @@ export default function Projects({ navigate }: Props) {
           <div className="empty-state-desc">
             Describe your project requirements and let AI generate a full task plan instantly.
           </div>
-          <button className="btn btn-primary btn-lg" onClick={() => setShowModal(true)}>
-            ⚡ Create First AI Project
-          </button>
+          {hasPermission('projects:create') && (
+            <button className="btn btn-primary btn-lg" onClick={() => setShowModal(true)}>
+              ⚡ Create First AI Project
+            </button>
+          )}
         </div>
       ) : (
         <>
@@ -207,22 +222,24 @@ export default function Projects({ navigate }: Props) {
                   <span className={`badge badge-${p.status}`} style={{ marginTop: 4 }}>{p.status}</span>
                 </div>
                 
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button 
-                    className="btn btn-secondary btn-sm" 
-                    style={{ padding: '4px 8px' }}
-                    onClick={(e) => { e.stopPropagation(); setEditingProject(p); }}
-                  >
-                    ✏️
-                  </button>
-                  <button 
-                    className="btn btn-danger btn-sm" 
-                    style={{ padding: '4px 8px' }}
-                    onClick={(e) => handleDelete(e, p.id, p.name)}
-                  >
-                    🗑️
-                  </button>
-                </div>
+                {hasPermission('projects:manage') && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button 
+                      className="btn btn-secondary btn-sm" 
+                      style={{ padding: '4px 8px' }}
+                      onClick={(e) => { e.stopPropagation(); setEditingProject(p); }}
+                    >
+                      ✏️
+                    </button>
+                    <button 
+                      className="btn btn-danger btn-sm" 
+                      style={{ padding: '4px 8px' }}
+                      onClick={(e) => handleDelete(e, p.id, p.name)}
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                )}
               </div>
 
               <p className="project-card-desc">{p.description || 'No description'}</p>
@@ -242,6 +259,7 @@ export default function Projects({ navigate }: Props) {
               </div>
 
               <div className="project-card-meta">
+                <span>👤 {p.owner_name || 'System'}</span>
                 <span>📅 {formatDate(p.start_date)}</span>
                 {p.end_date && <span>→ {formatDate(p.end_date)}</span>}
                 <span style={{ marginLeft: 'auto' }}>View →</span>

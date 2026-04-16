@@ -2,15 +2,17 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const geminiService = require('../services/geminiService');
+const { auth, checkPermission } = require('../middleware/authMiddleware');
 
 /**
  * @route GET /api/chat/sessions
  * @desc Get all chat sessions (history)
  */
-router.get('/sessions', async (req, res) => {
+router.get('/sessions', auth, checkPermission('ai:assistant'), async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM chat_sessions ORDER BY updated_at DESC'
+      'SELECT * FROM chat_sessions WHERE org_id = $1 ORDER BY updated_at DESC',
+      [req.user.org_id]
     );
     res.json(result.rows);
   } catch (error) {
@@ -22,12 +24,19 @@ router.get('/sessions', async (req, res) => {
  * @route POST /api/chat/sessions
  * @desc Create a new chat session
  */
-router.post('/sessions', async (req, res) => {
+router.post('/sessions', auth, checkPermission('ai:assistant'), async (req, res) => {
   try {
     const { title, projectId } = req.body;
+    
+    // Verify project belongs to org if provided
+    if (projectId) {
+      const pCheck = await db.query('SELECT id FROM projects WHERE id = $1 AND org_id = $2', [projectId, req.user.org_id]);
+      if (pCheck.rows.length === 0) return res.status(403).json({ error: 'Access denied to project' });
+    }
+
     const result = await db.query(
-      'INSERT INTO chat_sessions (title, project_id) VALUES ($1, $2) RETURNING *',
-      [title || 'New Conversation', projectId || null]
+      'INSERT INTO chat_sessions (title, project_id, org_id) VALUES ($1, $2, $3) RETURNING *',
+      [title || 'New Conversation', projectId || null, req.user.org_id]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -39,15 +48,15 @@ router.post('/sessions', async (req, res) => {
  * @route PATCH /api/chat/sessions/:sessionId
  * @desc Rename a chat session
  */
-router.patch('/sessions/:sessionId', async (req, res) => {
+router.patch('/sessions/:sessionId', auth, checkPermission('ai:assistant'), async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { title } = req.body;
     const result = await db.query(
-      'UPDATE chat_sessions SET title = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
-      [title, sessionId]
+      'UPDATE chat_sessions SET title = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND org_id = $3 RETURNING *',
+      [title, sessionId, req.user.org_id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Session not found' });
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Session not found or access denied' });
     res.json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -58,10 +67,9 @@ router.patch('/sessions/:sessionId', async (req, res) => {
  * @route DELETE /api/chat/sessions/:sessionId
  * @desc Delete a chat session and its messages
  */
-router.delete('/sessions/:sessionId', async (req, res) => {
+router.delete('/sessions/:sessionId', auth, checkPermission('ai:assistant'), async (req, res) => {
   try {
-    const { sessionId } = req.params;
-    await db.query('DELETE FROM chat_sessions WHERE id = $1', [sessionId]);
+    await db.query('DELETE FROM chat_sessions WHERE id = $1 AND org_id = $2', [sessionId, req.user.org_id]);
     res.json({ message: 'Session deleted' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -72,12 +80,15 @@ router.delete('/sessions/:sessionId', async (req, res) => {
  * @route GET /api/chat/sessions/:sessionId/messages
  * @desc Get all messages for a session
  */
-router.get('/sessions/:sessionId/messages', async (req, res) => {
+router.get('/sessions/:sessionId/messages', auth, checkPermission('ai:assistant'), async (req, res) => {
   try {
     const { sessionId } = req.params;
     const result = await db.query(
-      'SELECT * FROM chat_messages WHERE session_id = $1 ORDER BY created_at ASC',
-      [sessionId]
+      `SELECT m.* FROM chat_messages m
+       JOIN chat_sessions s ON m.session_id = s.id
+       WHERE m.session_id = $1 AND s.org_id = $2
+       ORDER BY m.created_at ASC`,
+      [sessionId, req.user.org_id]
     );
     res.json(result.rows);
   } catch (error) {
@@ -89,7 +100,7 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
  * @route POST /api/chat
  * @desc AI Project Assistant — answers questions with session persistence
  */
-router.post('/', async (req, res) => {
+router.post('/', auth, checkPermission('ai:assistant'), async (req, res) => {
   try {
     const { message, projectId, sessionId } = req.body;
     if (!message) return res.status(400).json({ error: 'message is required' });
@@ -99,10 +110,14 @@ router.post('/', async (req, res) => {
     // 1. Create a session if none exists (fallback)
     if (!activeSessionId) {
       const sessionResult = await db.query(
-        'INSERT INTO chat_sessions (title, project_id) VALUES ($1, $2) RETURNING id',
-        [message.substring(0, 30) + (message.length > 30 ? '...' : ''), projectId || null]
+        'INSERT INTO chat_sessions (title, project_id, org_id) VALUES ($1, $2, $3) RETURNING id',
+        [message.substring(0, 30) + (message.length > 30 ? '...' : ''), projectId || null, req.user.org_id]
       );
       activeSessionId = sessionResult.rows[0].id;
+    } else {
+      // Verify session belongs to user org
+      const sCheck = await db.query('SELECT id FROM chat_sessions WHERE id = $1 AND org_id = $2', [activeSessionId, req.user.org_id]);
+      if (sCheck.rows.length === 0) return res.status(403).json({ error: 'Access denied to session' });
     }
 
     // 2. Save User Message
@@ -130,8 +145,9 @@ router.post('/', async (req, res) => {
             COALESCE(SUM(t.estimated_hours) FILTER (WHERE t.status != 'done'), 0) as current_workload
           FROM team_members tm
           LEFT JOIN tasks t ON tm.id = t.assigned_to
+          WHERE tm.org_id = $1
           GROUP BY tm.id
-        `),
+        `, [req.user.org_id]),
       ]);
 
       const p = project.rows[0];
@@ -140,14 +156,15 @@ router.post('/', async (req, res) => {
       }
     } else {
       const [projects, team] = await Promise.all([
-        db.query(`SELECT p.name, p.status, COUNT(t.id) as tasks FROM projects p LEFT JOIN tasks t ON t.project_id = p.id GROUP BY p.id`),
+        db.query(`SELECT p.name, p.status, COUNT(t.id) as tasks FROM projects p LEFT JOIN tasks t ON t.project_id = p.id WHERE p.org_id = $1 GROUP BY p.id`, [req.user.org_id]),
         db.query(`
           SELECT tm.name, tm.role, tm.availability_hours,
             COALESCE(SUM(t.estimated_hours) FILTER (WHERE t.status != 'done'), 0) as current_workload
           FROM team_members tm
           LEFT JOIN tasks t ON tm.id = t.assigned_to
+          WHERE tm.org_id = $1
           GROUP BY tm.id
-        `)
+        `, [req.user.org_id])
       ]);
       contextData = `**Portfolio Overview:**\n${projects.rows.map(p => `- ${p.name} (${p.status})`).join('\n')}\n\n**Team Workload:**\n${team.rows.map(m => `- ${m.name}: ${m.current_workload}h`).join('\n')}`;
     }

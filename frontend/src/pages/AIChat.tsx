@@ -11,9 +11,11 @@ import {
   renameChatSession, 
   getChatMessages 
 } from '../lib/api';
+import { useModal } from '../context/ModalContext';
 
 export default function AIChat() {
   const qc = useQueryClient();
+  const { confirm } = useModal();
   const [input, setInput] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -162,7 +164,15 @@ export default function AIChat() {
                   
                   <div className="history-actions" style={{ display: 'flex', gap: 6 }}>
                     <button onClick={(e) => startRename(e, session)} style={{ background: 'none', border: 'none', fontSize: 11, padding: 0 }}>✏️</button>
-                    <button onClick={(e) => { e.stopPropagation(); if(confirm('Delete chat?')) deleteSessionMutation.mutate(session.id); }} style={{ background: 'none', border: 'none', fontSize: 11, padding: 0 }}>🗑️</button>
+                    <button onClick={async (e) => { 
+                      e.stopPropagation(); 
+                      const ok = await confirm({
+                        title: 'Delete Conversation?',
+                        message: `Permanently delete "${session.title}" and all its messages?`,
+                        type: 'danger'
+                      });
+                      if(ok) deleteSessionMutation.mutate(session.id); 
+                    }} style={{ background: 'none', border: 'none', fontSize: 11, padding: 0 }}>🗑️</button>
                   </div>
                 </div>
               ))

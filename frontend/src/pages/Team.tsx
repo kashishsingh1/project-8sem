@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTeam, createMember, updateMember, deleteMember, getRoles, createRole as apiCreateRole, updateRole, deleteRole, getTasksByMember } from '../lib/api';
+import { useModal } from '../context/ModalContext';
 
 /**
  * ── Searchable Role Selector ─────────────────────────────────
@@ -147,6 +148,7 @@ function SearchableRoleSelect({
 
 export default function Team() {
   const qc = useQueryClient();
+  const { confirm } = useModal();
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingMember, setEditingMember] = useState<any>(null);
   const [newMember, setNewMember] = useState({ name: '', email: '', role: '', availability_hours: 40, skills: '' });
@@ -501,7 +503,14 @@ export default function Team() {
                       ✏️
                     </button>
                     <button
-                      onClick={() => { if (confirm(`Remove ${member.name}?`)) deleteMutation.mutate(member.id); }}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: 'Remove Team Member?',
+                          message: `Are you sure you want to remove "${member.name}"? This will unassign them from all active tasks.`,
+                          type: 'danger'
+                        });
+                        if (ok) deleteMutation.mutate(member.id);
+                      }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}
                       title="Remove member"
                     >
@@ -857,7 +866,14 @@ export default function Team() {
                     }}
                   />
                   <button
-                    onClick={() => { if (confirm(`Delete role "${role.name}"?`)) roleDeleteMutation.mutate(role.id); }}
+                    onClick={async () => { 
+                      const ok = await confirm({
+                        title: 'Delete Role?',
+                        message: `Permanently delete the role "${role.name}"?`,
+                        type: 'danger'
+                      });
+                      if (ok) roleDeleteMutation.mutate(role.id); 
+                    }}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16 }}
                     title="Delete role"
                   >

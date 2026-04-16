@@ -1,12 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getProjects, generateReport, getPortfolioSummary, getReportHistory, deleteReport } from '../lib/api';
 import { useState, useRef } from 'react';
+import { useModal } from '../context/ModalContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Trash2 } from 'lucide-react';
 
 export default function Reports() {
   const qc = useQueryClient();
+  const { confirm } = useModal();
   const reportRef = useRef<HTMLDivElement>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [activeReport, setActiveReport] = useState<any>(null);
@@ -48,9 +50,15 @@ export default function Reports() {
     },
   });
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (confirm('Are you sure you want to delete this report from history?')) {
+    const ok = await confirm({
+      title: 'Delete Report?',
+      message: 'Are you sure you want to permanently remove this report from the history?',
+      type: 'danger'
+    });
+    
+    if (ok) {
       deleteMutation.mutate(id);
     }
   };

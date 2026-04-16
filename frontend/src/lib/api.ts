@@ -5,6 +5,36 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Request interceptor to add JWT
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('planai_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor to handle unauthorized
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('planai_token');
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// ── Auth & Users ───────────────────────────────────────────
+export const loginUser = (data: any) => api.post('/auth/login', data).then(r => r.data);
+export const signupUser = (data: any) => api.post('/auth/signup', data).then(r => r.data);
+export const getMe = () => api.get('/auth/me').then(r => r.data);
+export const getOrgUsers = () => api.get('/users').then(r => r.data);
+export const inviteUser = (email: string, roleKey: string) => api.post('/users/invite', { email, roleKey }).then(r => r.data);
+
 // ── Projects ──────────────────────────────────────────────
 export const getProjects = () =>
   api.get('/projects').then(r => r.data);
@@ -128,3 +158,4 @@ export const getChatMessages = (sessionId: string) =>
   api.get(`/chat/sessions/${sessionId}/messages`).then(r => r.data);
 
 export default api;
+

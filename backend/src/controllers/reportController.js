@@ -2,26 +2,33 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const geminiService = require('../services/geminiService');
+const { auth, checkPermission } = require('../middleware/authMiddleware');
 
 /**
  * @route POST /api/reports/generate
  * @desc Generate an AI-powered client update report for a project
  */
-router.post('/generate', async (req, res) => {
+router.post('/generate', auth, checkPermission('ai:reports'), async (req, res) => {
   try {
     const { projectId } = req.body;
+    const orgId = req.user.org_id;
+
     if (!projectId) {
       return res.status(400).json({ error: 'projectId is required' });
     }
 
-    // 1. Fetch project data
+    // 1. Fetch project data (verified by org_id)
     const [projectResult, tasksResult] = await Promise.all([
-      db.query('SELECT * FROM projects WHERE id = $1', [projectId]),
-      db.query('SELECT title, status, estimated_hours, actual_hours, due_date FROM tasks WHERE project_id = $1', [projectId]),
+      db.query('SELECT * FROM projects WHERE id = $1 AND org_id = $2', [projectId, orgId]),
+      db.query(
+        'SELECT title, status, estimated_hours, actual_hours, due_date FROM tasks WHERE project_id = $1 AND project_id IN (SELECT id FROM projects WHERE org_id = $2)',
+        [projectId, orgId]
+      ),
     ]);
 
+
     if (projectResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Project not found' });
+      return res.status(404).json({ error: 'Project not found or access denied' });
     }
 
     const project = projectResult.rows[0];
@@ -62,8 +69,8 @@ Use a professional but friendly tone. Keep it under 300 words. Use markdown form
     
     // Save to history
     await db.query(
-      'INSERT INTO generated_reports (project_id, report_type, content) VALUES ($1, $2, $3)',
-      [projectId, 'client_update', report]
+      'INSERT INTO generated_reports (project_id, report_type, content, org_id) VALUES ($1, $2, $3, $4)',
+      [projectId, 'client_update', report, orgId]
     );
 
     res.json({
@@ -83,10 +90,18 @@ Use a professional but friendly tone. Keep it under 300 words. Use markdown form
  * @route GET /api/reports/:projectId/history
  * @desc Get past reports for a project
  */
-router.get('/:projectId/history', async (req, res) => {
+router.get('/:projectId/history', auth, checkPermission('ai:reports'), async (req, res) => {
   try {
     const { projectId } = req.params;
-    const result = await db.query('SELECT * FROM generated_reports WHERE project_id = $1 ORDER BY generated_at DESC', [projectId]);
+    const orgId = req.user.org_id;
+
+    const result = await db.query(
+      `SELECT * FROM generated_reports 
+       WHERE project_id = $1 
+       AND org_id = $2
+       ORDER BY generated_at DESC`, 
+      [projectId, orgId]
+    );
     res.json(result.rows);
   } catch (error) {
     console.error('History Query Error:', error);
@@ -98,10 +113,15 @@ router.get('/:projectId/history', async (req, res) => {
  * @route DELETE /api/reports/history/:id
  * @desc Delete a report from history
  */
-router.delete('/history/:id', async (req, res) => {
+router.delete('/history/:id', auth, checkPermission('ai:reports'), async (req, res) => {
   try {
     const { id } = req.params;
-    await db.query('DELETE FROM generated_reports WHERE id = $1', [id]);
+    await db.query(`
+      DELETE FROM generated_reports 
+      WHERE id = $1 
+      AND org_id = $2`, 
+      [id, req.user.org_id]
+    );
     res.json({ message: 'Report deleted successfully' });
   } catch (error) {
     console.error('Delete History Error:', error);
@@ -113,17 +133,19 @@ router.delete('/history/:id', async (req, res) => {
  * @route GET /api/reports/summary
  * @desc Generate a portfolio-level summary across all projects
  */
-router.get('/summary', async (req, res) => {
+router.get('/summary', auth, checkPermission('ai:reports'), async (req, res) => {
   try {
+    const orgId = req.user.org_id;
     const projectsResult = await db.query(`
       SELECT p.name, p.status, p.risk_score,
         COUNT(t.id) as total_tasks,
         COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
       FROM projects p
       LEFT JOIN tasks t ON t.project_id = p.id
+      WHERE p.org_id = $1
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `);
+    `, [orgId]);
 
     const projects = projectsResult.rows;
 
