@@ -1,0 +1,10 @@
+@@ -74,7 +75,8 @@
+         todo: taskList.filter(t => t.status === 'todo').length,
+         completion_percent: completionPercent
+       },
+-      risk: riskData
++      risk: riskData,
++      risk_history: riskHistory.rows
+     });
+   } catch (error) {
+     res.status(500).json({ error: error.message });
