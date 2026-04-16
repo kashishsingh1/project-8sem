@@ -1,24 +1,40 @@
 const nodemailer = require('nodemailer');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT),
-  secure: false, // true for 465, false for 587
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
+/**
+ * Get nodemailer transporter
+ */
+const getTransporter = () => {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    // Serverless optimization: lower timeouts and pooled connections
+    connectionTimeout: 10000, 
+    greetingTimeout: 5000,
+    socketTimeout: 15000,
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+};
 
 /**
  * Send an email
  */
 async function sendEmail({ to, subject, html }) {
   if (!to) return null;
+  const transporter = getTransporter();
+  
   try {
+    // Verify connection before sending in production
+    if (process.env.NODE_ENV === 'production') {
+      await transporter.verify();
+    }
+    
     const info = await transporter.sendMail({
       from: `"PlanAI" <${process.env.SMTP_FROM || 'no-reply@planai.com'}>`,
       to,
@@ -29,6 +45,9 @@ async function sendEmail({ to, subject, html }) {
     return info;
   } catch (error) {
     console.error('❌ Email failed:', error);
+    // Log more detail for debugging on Vercel
+    if (error.code) console.error('Error Code:', error.code);
+    if (error.command) console.error('Error Command:', error.command);
     return null;
   }
 }
