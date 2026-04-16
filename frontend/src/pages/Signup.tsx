@@ -26,7 +26,11 @@ export default function Signup({ onLoginClick }: SignupProps) {
       const res = await api.post('/auth/signup', formData);
       login(res.data.token, res.data.user);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Signup failed. Please try again.');
+      const errorData = err.response?.data;
+      const message = typeof errorData === 'string' 
+        ? errorData 
+        : (errorData?.error || errorData?.message || 'Signup failed. Please try again.');
+      setError(message);
     } finally {
       setLoading(false);
     }

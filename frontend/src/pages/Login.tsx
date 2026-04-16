@@ -22,7 +22,11 @@ export default function Login({ onSignupClick }: LoginProps) {
       const res = await api.post('/auth/login', { email, password });
       login(res.data.token, res.data.user);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
+      const errorData = err.response?.data;
+      const message = typeof errorData === 'string' 
+        ? errorData 
+        : (errorData?.error || errorData?.message || 'Login failed. Please check your credentials.');
+      setError(message);
     } finally {
       setLoading(false);
     }

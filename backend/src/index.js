@@ -6,8 +6,10 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 const schedulerService = require('./services/schedulerService');
 
-// Start background notification scheduler
-schedulerService.start();
+// Start background notification scheduler (skip in Vercel/Serverless)
+if (!process.env.VERCEL) {
+  schedulerService.start();
+}
 
 // Middleware
 app.use(cors());
@@ -43,6 +45,12 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error', message: err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`\x1b[32m✓\x1b[0m Server running on http://localhost:${PORT}`);
-});
+// Conditionally start the server (skip in Vercel/Serverless environments)
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\x1b[32m✓\x1b[0m Server running on http://localhost:${PORT}`);
+  });
+}
+
+// Export the app for Vercel Serverless Functions
+module.exports = app;

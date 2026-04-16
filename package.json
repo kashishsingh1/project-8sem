@@ -1,0 +1,11 @@
+{
+  "name": "planai-monorepo",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "vercel-build": "npm install --include=dev && cd frontend && npm run build"
+  }
+}
