@@ -9,6 +9,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Users from './pages/Users';
 import AcceptInvite from './pages/AcceptInvite';
+import Landing from './pages/Landing';
 import { useAuth } from './context/AuthContext';
 import { ModalProvider } from './context/ModalContext';
 
@@ -17,7 +18,7 @@ type Page = 'dashboard' | 'projects' | 'team' | 'reports' | 'chat' | 'users' | {
 export default function App() {
   const { user, loading, logout, hasPermission } = useAuth();
   const [page, setPage] = useState<Page>('dashboard');
-  const [authView, setAuthView] = useState<'login' | 'signup'>('login');
+  const [authView, setAuthView] = useState<'landing' | 'login' | 'signup'>('landing');
 
   const navigate = (to: Page) => setPage(to);
 
@@ -35,6 +36,15 @@ export default function App() {
 
   if (!user) {
     if (isAcceptingInvite) return <AcceptInvite />;
+    
+    if (authView === 'landing') {
+      return (
+        <Landing 
+          onGetStarted={() => setAuthView('signup')} 
+          onLogin={() => setAuthView('login')} 
+        />
+      );
+    }
     
     return authView === 'login' 
       ? <Login onSignupClick={() => setAuthView('signup')} /> 
