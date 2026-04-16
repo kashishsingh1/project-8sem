@@ -33,9 +33,45 @@ If you encounter "Undefined Column" errors (PostgreSQL code `42703`), verify the
 
 ---
 
-## 📧 Email Flow
-The system uses `mailService.js` for:
-1. **Invites**: Secure 32-byte token generation with 48h expiry.
-2. **Project Setup**: AI-generated plan confirmations.
+## 🚀 Vercel Deployment (Production)
 
-Always ensure `FRONTEND_URL` is set in the `.env` to generate valid invitation links.
+The platform is architected as a **Monorepo** and is optimized for the Vercel Serverless environment.
+
+### 1. Project Orchestration
+- **Root Configuration**: The [vercel.json](file:///Users/kashishsingh/Desktop/%20project%208sem/vercel.json) orchestrates the entire deployment.
+- **Rewrites**: All `/api/*` traffic is routed to the Express backend (`api/index.js`), while all other traffic is handled by the React frontend.
+
+### 2. Required Environment Variables
+You must provision the following secrets in your Vercel Project Settings (Production Scope) to ensure full functionality:
+
+| Variable | Description |
+| :--- | :--- |
+| `DATABASE_URL` | Neon PostgreSQL connection string (use Pooled version) |
+| `JWT_SECRET` | Secure string for signing auth tokens |
+| `GEMINI_API_KEY_1` | Primary Google Gemini Pro AI Key |
+| `SMTP_HOST` | e.g., `smtp.gmail.com` |
+| `SMTP_PORT` | `587` (Standard) or `465` (Secure) |
+| `SMTP_USER` | Your email address |
+| `SMTP_PASS` | Your App Password (NOT your regular password) |
+| `SMTP_FROM` | The sender name/email displayed to users |
+
+> [!IMPORTANT]
+> **No Newlines**: Ensure there are no trailing carriage returns or newlines in your Vercel environment variables, as this will cause "EBUSY" or "getaddrinfo" DNS errors for the SMTP and Database connections.
+
+### 3. Deployment Command
+To avoid native binding issues with Vite/Rolldown in the cloud builder, it is highly recommended to use the **Local Pre-build** method:
+
+```bash
+# 1. Pull settings & fresh environment
+vercel pull --yes
+
+# 2. Build the project locally (using Vercel's logic)
+vercel build --prod
+
+# 3. Deploy the pre-packaged assets directly
+vercel deploy --prebuilt --prod --yes
+```
+
+### 4. Serverless Constraints
+- **Background Tasks**: The standard `setInterval` scheduler is disabled on Vercel. Use **Vercel Cron Jobs** to trigger the `/api/index.js` endpoints for daily/weekly reporting.
+- **Cold Starts**: The `mailService.js` is optimized with a factory pattern to verify connections on every request, ensuring emails never fail due to stale sockets.
